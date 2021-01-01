@@ -20,37 +20,13 @@ const REF_USER: string = "user";
 const REF_BUSINESS: string = "business";
 const REF_CROWN_ONSPOT: string = "crown-onspot";
 
+exports.user = require("./functions/user");
 exports.order = require("./functions/order");
 exports.product = require("./functions/product");
 exports.review = require("./functions/review");
 exports.explore = require("./functions/explore");
 exports.business = require("./functions/business");
 exports.business_partner = require("./functions/business-partner");
-
-export const onCreateUser = functions.auth.user().onCreate(async (user) => {
-  if (user.email === null) {
-    await admin
-      .auth()
-      .deleteUser(user.uid)
-      .then(function () {
-        return;
-      });
-  } else {
-    try {
-      await firestore.collection(REF_USER).doc(user.uid).set({
-        displayName: user.displayName,
-        email: user.email,
-        profileImageUrl: user.photoURL,
-        userId: user.uid,
-        hasOnSpotAccount: false,
-        hasOnSpotBusinessAccount: false,
-        hasOnSpotDeliveryAccount: false,
-      });
-    } catch (error) {
-      console.error(error);
-    }
-  }
-});
 
 export const getUser = functions.https.onRequest(async (request, response) => {
   const userId: string = request.body.userId;

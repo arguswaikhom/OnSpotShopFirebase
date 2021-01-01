@@ -30,6 +30,7 @@ export const fieldImageUrl = "imageUrl";
 export const fieldMobileNumber = "mobileNumber";
 export const fieldWebsite = "website";
 export const fieldIsOpen = "isOpen";
+export const fieldMinOrder = "minOrder";
 export const fieldBusinessType = "businessType";
 export const fieldBusinessTypes = "businessTypes";
 export const fieldHodAvailable = "hodAvailable";
@@ -39,7 +40,7 @@ export const fieldShippingCharges = "shippingCharges";
 export const fieldPerOrder = "perOrder";
 export const fieldBusinessRating = "businessRating";
 export const fieldProductCount = "productCount";
-export const fieldActiveProductCount = "activeProductCount";
+export const fieldSellableProductCount = "sellableProductCount";
 export const fieldProductCategories = "productCategories";
 
 // product
@@ -85,7 +86,7 @@ export const valueReviewTypeCustomerByBusiness = "CUSTOMER_BY_BUSINESS";
 export const valueReviewTypeCustomerByDelivery = "CUSTOMER_BY_DELIVERY";
 
 // crown-onspot
-export const refCrownOnspot = "crown-onspot";
+export const refOnSpotShop = "onspotshop";
 export const fieldOsClass = "osClass";
 export const fieldId = "id";
 export const fieldMessage = "message";
@@ -97,7 +98,9 @@ export const prefixDelivery = "osd::";
 export const prefixCustomer = "os::";
 export const fieldAdminBlocked = "adminBlocked";
 export const fieldIsActive = "isActive";
+export const fieldIsVisible = "isVisible";
 export const fieldKeywords = "keywords";
+export const fieldDeviceToken = "deviceToken";
 export const fieldDeliveryRange = "deliveryRange";
 
 // key
