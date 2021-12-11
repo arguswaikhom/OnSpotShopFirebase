@@ -186,7 +186,6 @@ export const getUserBusiness = functions.https.onRequest(
         );
       }
 
-      console.log("Total: ", businessList.length);
       response.status(200).send({ filter: filter, data: businessList });
       return;
     } catch (error) {

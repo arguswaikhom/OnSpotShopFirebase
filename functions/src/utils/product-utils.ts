@@ -3,6 +3,34 @@ import { TextUtils } from "../utils/textutil";
 import { ListUtils } from "../utils/listutils";
 import { Utils } from "../utils/utils";
 import * as bu from "../utils/business-utils";
+import { OSDiscountType } from "./enum";
+
+export function getFinalPrice(price) {
+  return price[str.fieldPrice] + getTaxPrice(price) - getDiscountPrice(price);
+}
+
+export function getDiscountPrice(price) {
+  let discountPrice = 0;
+  switch (price[str.fieldDiscount][str.fieldType]) {
+    case OSDiscountType.PERCENT:
+      discountPrice =
+        (price[str.fieldPrice] * price[str.fieldDiscount][str.fieldValue]) /
+        100;
+      break;
+    case OSDiscountType.PRICE:
+      discountPrice = price[str.fieldPrice];
+      break;
+    case OSDiscountType.NO_DISCOUNT:
+    default:
+      discountPrice = 0;
+      break;
+  }
+  return discountPrice;
+}
+
+export function getTaxPrice(price) {
+  return (price[str.fieldPrice] * price[str.fieldTax]) / 100;
+}
 
 export function isProductSellable(product) {
   return isActive(product) && !product[str.fieldArchived];

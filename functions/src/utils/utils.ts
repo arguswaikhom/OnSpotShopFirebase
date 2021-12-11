@@ -19,10 +19,12 @@ export function getTimeNow() {
   return admin.firestore.Timestamp.fromDate(new Date());
 }
 
-export function isEmpty(obj) {
+export function isDefine(obj) {
+  return !(obj == undefined || obj == null);
+}
+export function isEmptyObject(obj) {
   return (
-    obj == undefined ||
-    obj == null ||
+    !isDefine(obj) ||
     (Object.keys(obj).length === 0 && obj.constructor === Object)
   );
 }

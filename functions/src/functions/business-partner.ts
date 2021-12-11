@@ -5,7 +5,7 @@ import * as ct from "../utils/list-item-type";
 import { BusinessRequestStatus } from "../utils/enum";
 import { ListUtils } from "../utils/listutils";
 import { NotificationSender } from "../controller/notificationController";
-import { Utils } from "../utils/utils";
+import * as utils from "../utils/utils";
 
 const firestore = admin.firestore();
 
@@ -57,7 +57,10 @@ exports.cancelBusinessPartnership = functions.https.onRequest(
               businessRefId
             )
         );
-        if (!Utils.isEmpty(activeOrderByUser) && !activeOrderByUser.empty) {
+        if (
+          !utils.isEmptyObject(activeOrderByUser) &&
+          !activeOrderByUser.empty
+        ) {
           activeOrderByUser.forEach((order) => {
             const toUpdateDelivery = {};
             toUpdateDelivery[str.fieldDelivery] = null;
@@ -270,86 +273,97 @@ exports.addBusinessRequest = functions.https.onRequest(
 exports.acceptDPRequest = functions.https.onRequest(
   async (request, response) => {
     try {
+      let business, user;
       const acceptedStatus = BusinessRequestStatus.ACCEPTED;
       const userId = request.body.userId;
       const businessRefId = request.body.businessRefId;
       let notificationId = request.body.notificationId;
 
-      await firestore.runTransaction(async (t) => {
-        const user = await t.get(firestore.collection(str.refUser).doc(userId));
-        const business = await t.get(
-          firestore.collection(str.refBusiness).doc(businessRefId)
-        );
-        // If notification id is not present, find it and update
-        if (Utils.isEmpty(notificationId)) {
-          const q = await t.get(
-            firestore
+      await firestore
+        .runTransaction(async (t) => {
+          user = await t.get(firestore.collection(str.refUser).doc(userId));
+          business = await t.get(
+            firestore.collection(str.refBusiness).doc(businessRefId)
+          );
+          // If notification id is not present, find it and update
+          if (utils.isEmptyObject(notificationId)) {
+            const q = await t.get(
+              firestore
+                .collection(str.refNotification)
+                .where(str.fieldType, "==", ct.DELIVERY_PARTNERSHIP_REQUEST)
+                .where(str.fieldOsb, "==", businessRefId)
+                .where(str.fieldOsd, "==", userId)
+            );
+            if (!q.empty) notificationId = q.docs[0].id;
+          }
+
+          // * 1 -> Get the business list of the user and update the list
+          const businessPartners: any[] = user.get(str.fieldBusinessOSD);
+          if (!ListUtils.isEmpty(businessPartners)) {
+            const updatedBusinessPartners: any = {};
+            businessPartners.forEach((p) => {
+              if (p[str.fieldBusinessRefId] == businessRefId)
+                p[str.fieldStatus] = acceptedStatus;
+            });
+            updatedBusinessPartners[str.fieldBusinessOSD] = businessPartners;
+            t.update(
+              firestore.collection(str.refUser).doc(userId),
+              updatedBusinessPartners
+            );
+          }
+          // * -> 1
+
+          // * 2 -> Get the delivery partnership list of the business and update the list
+          const deliveryPartners: any[] = business.get(str.fieldOsd);
+          if (!ListUtils.isEmpty(deliveryPartners)) {
+            const updatedDeliveryPartners = {};
+            deliveryPartners.forEach((p) => {
+              if (p[str.fieldUserId] == userId)
+                p[str.fieldStatus] = acceptedStatus;
+            });
+            updatedDeliveryPartners[str.fieldOsd] = deliveryPartners;
+            t.update(
+              firestore.collection(str.refBusiness).doc(businessRefId),
+              updatedDeliveryPartners
+            );
+          }
+          // * -> 2
+        })
+        .then(async (obj) => {
+          response.status(200).send("Accepted");
+
+          if (utils.isEmptyObject(user) || utils.isEmptyObject(business))
+            return;
+          // * 3 -> Update notification
+          if (!utils.isEmptyObject(notificationId)) {
+            const notiUpdate = {};
+            notiUpdate[str.fieldStatus] = acceptedStatus;
+            await firestore
               .collection(str.refNotification)
-              .where(str.fieldType, "==", ct.DELIVERY_PARTNERSHIP_REQUEST)
-              .where(str.fieldOsb, "==", businessRefId)
-              .where(str.fieldOsd, "==", userId)
-          );
-          if (!q.empty) notificationId = q.docs[0].id;
-        }
+              .doc(notificationId)
+              .update(notiUpdate);
+          }
+          // * -> 3
 
-        // * 1 -> Get the business list of the user and update the list
-        const businessPartners: any[] = user.get(str.fieldBusinessOSD);
-        if (!ListUtils.isEmpty(businessPartners)) {
-          const updatedBusinessPartners: any = {};
-          businessPartners.forEach((p) => {
-            if (p[str.fieldBusinessRefId] == businessRefId)
-              p[str.fieldStatus] = acceptedStatus;
-          });
-          updatedBusinessPartners[str.fieldBusinessOSD] = businessPartners;
-          t.update(
-            firestore.collection(str.refUser).doc(userId),
-            updatedBusinessPartners
-          );
-        }
-        // * -> 1
-
-        // * 2 -> Get the delivery partnership list of the business and update the list
-        const deliveryPartners: any[] = business.get(str.fieldOsd);
-        if (!ListUtils.isEmpty(deliveryPartners)) {
-          const updatedDeliveryPartners = {};
-          deliveryPartners.forEach((p) => {
-            if (p[str.fieldUserId] == userId)
-              p[str.fieldStatus] = acceptedStatus;
-          });
-          updatedDeliveryPartners[str.fieldOsd] = deliveryPartners;
-          t.update(
-            firestore.collection(str.refBusiness).doc(businessRefId),
-            updatedDeliveryPartners
-          );
-        }
-        // * -> 2
-
-        // * 3 -> Update notification
-        if (!Utils.isEmpty(notificationId)) {
-          const notiUpdate = {};
-          notiUpdate[str.fieldStatus] = acceptedStatus;
-          t.update(
-            firestore.collection(str.refNotification).doc(notificationId),
-            notiUpdate
-          );
-        }
-        // * -> 3
-
-        // * 4 -> Send notification to the osd user
-        try {
-          const notification = {
-            title: "Request Accepted",
-            body:
-              business.get(str.fieldDisplayName) +
-              " accepted your delivery partnership request",
-          };
-          await NotificationSender.toOSD(user, notification);
-        } catch (_) {
-          // Ignore error for the notification
-        }
-        // * -> 4
-      });
-      response.status(200).send("Accepted");
+          // * 4 -> Send notification to the osd user
+          try {
+            const notification = {
+              title: "Request Accepted",
+              body:
+                business.get(str.fieldDisplayName) +
+                " accepted your delivery partnership request",
+            };
+            await NotificationSender.toOSD(user, notification);
+          } catch (_) {
+            // Ignore error for the notification
+          }
+          // * -> 4
+        })
+        .catch((error) => {
+          console.error(error);
+          response.status(400).send("Something went wrong!!");
+          return;
+        });
       return;
     } catch (error) {
       console.error(error);
@@ -374,98 +388,112 @@ exports.acceptDPRequest = functions.https.onRequest(
 exports.rejectDPRequest = functions.https.onRequest(
   async (request, response) => {
     try {
+      let user, business;
       const rejectedStatus = BusinessRequestStatus.REJECTED;
       const userId = request.body.userId;
       const businessRefId = request.body.businessRefId;
       const initiator = request.body.initiator;
       let notificationId = request.body.notificationId;
 
-      await firestore.runTransaction(async (t) => {
-        const user = await t.get(firestore.collection(str.refUser).doc(userId));
-        const business = await t.get(
-          firestore.collection(str.refBusiness).doc(businessRefId)
-        );
-        // If notification id is not present, find it and update
-        if (Utils.isEmpty(notificationId)) {
-          const q = await t.get(
-            firestore
-              .collection(str.refNotification)
-              .where(str.fieldType, "==", ct.DELIVERY_PARTNERSHIP_REQUEST)
-              .where(str.fieldOsb, "==", businessRefId)
-              .where(str.fieldOsd, "==", userId)
+      await firestore
+        .runTransaction(async (t) => {
+          user = await t.get(firestore.collection(str.refUser).doc(userId));
+          business = await t.get(
+            firestore.collection(str.refBusiness).doc(businessRefId)
           );
-          if (!q.empty) notificationId = q.docs[0].id;
-        }
-
-        // * 1 -> Remove the business partner from the business partner list of the osd user
-        const businessPartners = user.get(str.fieldBusinessOSD);
-        if (!ListUtils.isEmpty(businessPartners)) {
-          const updatedBusinessPartners: any[] = [];
-          businessPartners.forEach((p) => {
-            if (p[str.fieldBusinessRefId] != businessRefId)
-              updatedBusinessPartners.push(p);
-          });
-          const toUpdate = {};
-          toUpdate[str.fieldBusinessOSD] = updatedBusinessPartners;
-          t.update(firestore.collection(str.refUser).doc(userId), toUpdate);
-        }
-        // * -> 1
-
-        // * 2 -> Remove the delivery partner from the osd list of the business
-        const deliveryPartners = business.get(str.fieldOsd);
-        if (!ListUtils.isEmpty(deliveryPartners)) {
-          const updatedDeliveryPartners: any[] = [];
-          deliveryPartners.forEach((p) => {
-            if (p[str.fieldUserId] != userId) updatedDeliveryPartners.push(p);
-          });
-          const toUpdate = {};
-          toUpdate[str.fieldOsd] = updatedDeliveryPartners;
-          t.update(
-            firestore.collection(str.refBusiness).doc(businessRefId),
-            toUpdate
-          );
-        }
-        // * -> 2
-
-        // * 3 -> Update the notification doc of the request
-        if (!Utils.isEmpty(notificationId)) {
-          // If the request was initiated by the business,
-          // update the status to rejected and keep the notification doc, to show it to the osd user's activity notification
-          if (initiator == "osb") {
-            const toUpdate = {};
-            // No need to display activity notification to the business since the request was rejected by them
-            toUpdate[str.fieldAccount] = admin.firestore.FieldValue.arrayRemove(
-              "osb::" + businessRefId
+          // If notification id is not present, find it and update
+          if (utils.isEmptyObject(notificationId)) {
+            const q = await t.get(
+              firestore
+                .collection(str.refNotification)
+                .where(str.fieldType, "==", ct.DELIVERY_PARTNERSHIP_REQUEST)
+                .where(str.fieldOsb, "==", businessRefId)
+                .where(str.fieldOsd, "==", userId)
             );
-            toUpdate[str.fieldStatus] = rejectedStatus;
+            if (!q.empty) notificationId = q.docs[0].id;
+          }
+
+          // * 1 -> Remove the business partner from the business partner list of the osd user
+          const businessPartners = user.get(str.fieldBusinessOSD);
+          if (!ListUtils.isEmpty(businessPartners)) {
+            const updatedBusinessPartners: any[] = [];
+            businessPartners.forEach((p) => {
+              if (p[str.fieldBusinessRefId] != businessRefId)
+                updatedBusinessPartners.push(p);
+            });
+            const toUpdate = {};
+            toUpdate[str.fieldBusinessOSD] = updatedBusinessPartners;
+            t.update(firestore.collection(str.refUser).doc(userId), toUpdate);
+          }
+          // * -> 1
+
+          // * 2 -> Remove the delivery partner from the osd list of the business
+          const deliveryPartners = business.get(str.fieldOsd);
+          if (!ListUtils.isEmpty(deliveryPartners)) {
+            const updatedDeliveryPartners: any[] = [];
+            deliveryPartners.forEach((p) => {
+              if (p[str.fieldUserId] != userId) updatedDeliveryPartners.push(p);
+            });
+            const toUpdate = {};
+            toUpdate[str.fieldOsd] = updatedDeliveryPartners;
             t.update(
-              firestore.collection(str.refNotification).doc(notificationId),
+              firestore.collection(str.refBusiness).doc(businessRefId),
               toUpdate
             );
-          } else if (initiator == "osd") {
-            // Delete the whode notification doc, if it was rejected by the osd user
-            t.delete(
-              firestore.collection(str.refNotification).doc(notificationId)
-            );
           }
-        }
+          // * -> 2
+        })
+        .then(async (obj) => {
+          response.status(200).send("Rejected");
 
-        // If a business rejected the request, notify it to the osd user
-        if (initiator == "osb") {
-          try {
-            const notification = {
-              title: "Request Rejected",
-              body:
-                business.get(str.fieldDisplayName) +
-                " rejected your delivery partnership request",
-            };
-            await NotificationSender.toOSD(user, notification);
-          } catch (_) {}
-        }
-        // * -> 3
-      });
+          if (utils.isEmptyObject(user) || utils.isEmptyObject(business))
+            return;
+          // * 3 -> Update the notification doc of the request
+          if (!utils.isEmptyObject(notificationId)) {
+            // If the request was initiated by the business,
+            // update the status to rejected and keep the notification doc, to show it to the osd user's activity notification
+            if (initiator == "osb") {
+              const toUpdate = {};
+              // No need to display activity notification to the business since the request was rejected by them
+              toUpdate[
+                str.fieldAccount
+              ] = admin.firestore.FieldValue.arrayRemove(
+                "osb::" + businessRefId
+              );
+              toUpdate[str.fieldStatus] = rejectedStatus;
+              await firestore
+                .collection(str.refNotification)
+                .doc(notificationId)
+                .update(toUpdate);
+            } else if (initiator == "osd") {
+              // Delete the whode notification doc, if it was rejected by the osd user
+              await firestore
+                .collection(str.refNotification)
+                .doc(notificationId)
+                .delete();
+            }
+          }
 
-      response.status(200).send("Rejected");
+          // If a business rejected the request, notify it to the osd user
+          if (initiator == "osb") {
+            try {
+              const notification = {
+                title: "Request Rejected",
+                body:
+                  business.get(str.fieldDisplayName) +
+                  " rejected your delivery partnership request",
+              };
+              await NotificationSender.toOSD(user, notification);
+            } catch (_) {}
+          }
+          // * -> 3
+        })
+        .catch((error) => {
+          console.error(error);
+          response.status(400).send("Something went wrong!!");
+          return;
+        });
+
       return;
     } catch (error) {
       console.error(error);

@@ -15,6 +15,12 @@ export enum BusinessRequestStatus {
   CANCELED = "CANCELED",
 }
 
+export enum OSDiscountType {
+  NO_DISCOUNT = "NO_DISCOUNT",
+  PERCENT = "PERCENT",
+  PRICE = "PRICE",
+}
+
 export enum OSClass {
   USER = "USER",
   BUSINESS = "BUSINESS",

@@ -8,7 +8,9 @@ import { BusinessItemV4 } from "../model/businessItem/businessItemV4";
 import { OrderStatus, BusinessRequestStatus } from "../utils/enum";
 import { NotificationSender } from "../controller/notificationController";
 import { ListUtils } from "../utils/listutils";
-import { Utils } from "../utils/utils";
+import * as utils from "../utils/utils";
+import * as pu from "../utils/product-utils";
+import { DistanceUtil } from "../model/DistanceUtil";
 
 const firestore = admin.firestore();
 
@@ -154,7 +156,7 @@ exports.confirmOrderDelivery = functions.https.onRequest(
         const result = {};
         const deliveryStatus = "DELIVERED";
 
-        if (!Utils.isEmpty(order.get(str.fieldDelivery))) {
+        if (!utils.isEmptyObject(order.get(str.fieldDelivery))) {
           if (userId == order.get(str.fieldDelivery)[str.fieldUserId]) {
             if (order.get(str.fieldStatus) == deliveryStatus) {
               // The order has already delivered
@@ -166,7 +168,7 @@ exports.confirmOrderDelivery = functions.https.onRequest(
                 status: deliveryStatus,
                 statusRecord: admin.firestore.FieldValue.arrayUnion({
                   status: deliveryStatus,
-                  timestamp: Utils.getTimeNow(),
+                  timestamp: utils.getTimeNow(),
                 }),
               });
 
@@ -278,6 +280,89 @@ exports.getDetails = functions.https.onRequest(async (request, response) => {
   }
 });
 
+/**
+ * Calculate shipping charge of an order
+ *
+ * @param order : order which the shipping charge is going to be calculated
+ * @returns [hodAvailable, shippingCharge] :
+ *
+ *          hodAvailable -> true || false : whether the order is available for home delivery or not
+ *          shippingCharge -> 0 if hodAvailable is false otherwise shipping charge will be calculated
+ */
+async function getOrderShippingCharge(order, productPrice) {
+  const business = await firestore
+    .collection(str.refBusiness)
+    .doc(order[str.fieldBusiness][str.fieldBusinessRefId])
+    .get();
+
+  // Home delivery is not available for this business
+  const hodAvailable = business.get(str.fieldHodAvailable);
+  if (!hodAvailable) return [false, 0];
+
+  // Distance between business's location and customer's location in KM
+  const distance = DistanceUtil.distance(
+    order[str.fieldBusiness][str.fieldLocation][str.fieldGeoPoint],
+    order[str.fieldCustomer][str.fieldLocation][str.fieldGeoPoint]
+  );
+
+  // Customer location is out of business's delivery range
+  if (distance > business.get(str.fieldDeliveRange)) return [false, 0];
+
+  // Free shipping available for this order
+  if (business.get(str.fieldFsAvailable)) return [true, 0];
+
+  // This business doesn't take shipping charge
+  const shippingCharges = business.get(str.fieldShippingCharges);
+  if (shippingCharges[str.fieldPerOrder] == 0) return [true, 0];
+
+  // Customer's location is in business's free shipping distance
+  const freeShippingDistance = shippingCharges[str.fieldFreeShippingDistance];
+  if (freeShippingDistance >= distance) return [true, 0];
+
+  // Customer eligible to the business provided free shipping to orders with a min price
+  const freeShippingPrice = shippingCharges[str.fieldFreeShippingPrice];
+  if (productPrice >= freeShippingPrice) return [true, 0];
+
+  const shippingChargePerOrder = shippingCharges[str.fieldPerOrder];
+  return utils.isDefine(shippingChargePerOrder)
+    ? [true, shippingChargePerOrder]
+    : [false, 0];
+}
+
+async function calculateOrderPrice(order) {
+  let totalTax = 0; // sum of tax price
+  let totalPrice = 0; // sum of (product price + tax - discount)
+  let productPrice = 0; // sum of (produc price)
+  let totalDiscount = 0; // sum of discount price
+  let totalQuantity = 0;
+  const productList = order[str.fieldItems];
+  for (const product of productList) {
+    // console.debug("Product: ", JSON.stringify(product));
+    const price = product[str.fieldPrice];
+    // console.debug("Price: ", JSON.stringify(price));
+    const quantity = product[str.fieldQuantity];
+    totalTax += pu.getTaxPrice(price) * quantity;
+    totalPrice += pu.getFinalPrice(price) * quantity;
+    productPrice += price[str.fieldPrice] * quantity;
+    totalDiscount += pu.getDiscountPrice(price) * quantity;
+    totalQuantity += quantity;
+  }
+  const shippingResult = await getOrderShippingCharge(order, productPrice);
+  const hodAvailable = shippingResult[0];
+  const shippingCharge = shippingResult[1];
+
+  order[str.fieldHodAvailable] = hodAvailable;
+  order[str.fieldProductPrice] = productPrice;
+  order[str.fieldTotalTax] = totalTax;
+  order[str.fieldTotalPrice] = totalPrice;
+  order[str.fieldTotalQuantity] = totalQuantity;
+  order[str.fieldTotalDiscount] = totalDiscount;
+  order[str.fieldShippingCharge] = shippingCharge;
+  order[str.fieldFinalPrice] = totalPrice + shippingCharge;
+
+  return order;
+}
+
 exports.onCreateOrder = functions.firestore
   .document("order/{orderId}")
   .onCreate(async (snap, context) => {
@@ -292,21 +377,30 @@ exports.onCreateOrder = functions.firestore
         firestore.collection(str.refBusiness).doc(businessRefId).get()
       );
       const result = await Promise.all(promises);
-      const customer = result[0].data();
+      const customer = result[0];
       const business = result[1];
 
-      const notification = {
+      const notificationOSB = {
         title: "New Order",
-        body: "You have a new order from " + customer[str.fieldDisplayName],
+        body: "You have a new order from " + customer.get(str.fieldDisplayName),
       };
+
+      const notificationOS = {
+        title: "Order placed",
+        body: "You order from ".concat(
+          business.get(str.fieldDisplayName),
+          " has been placed successfully"
+        ),
+      };
+
+      const updatedOrder = await calculateOrderPrice(snap.data());
+      updatedOrder[str.fieldIsActiveOrder] = true;
 
       // Send order notification to the business; and update the order as active order
       await Promise.all([
-        firestore
-          .collection(str.refOrder)
-          .doc(snap.id)
-          .update({ isActiveOrder: true }),
-        NotificationSender.toOSB(business, notification),
+        firestore.collection(str.refOrder).doc(snap.id).update(updatedOrder),
+        NotificationSender.toOSB(business, notificationOSB),
+        NotificationSender.toOS(customer, notificationOS),
       ]);
     } catch (error) {
       console.error(error);

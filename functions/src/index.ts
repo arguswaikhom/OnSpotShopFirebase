@@ -28,7 +28,7 @@ exports.explore = require("./functions/explore");
 exports.business = require("./functions/business");
 exports.business_partner = require("./functions/business-partner");
 
-export const getUser = functions.https.onRequest(async (request, response) => {
+/* export const getUser = functions.https.onRequest(async (request, response) => {
   const userId: string = request.body.userId;
 
   await firestore
@@ -48,7 +48,7 @@ export const getUser = functions.https.onRequest(async (request, response) => {
       console.log(error);
       response.status(400).send(error);
     });
-});
+}); */
 
 /**
  * Create a new business.
